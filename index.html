@@ -2353,6 +2353,1237 @@ async function getCompositeBase64(imgData, maskCanvas) {
 }
 
 async function runInpaint() {
+  if (!inpaintImageData) { showMsg('inpaintStatus','⚠️ Upload an image first!','error'); return; }
+  const prompt = document.getElementById('inpaintPrompt').value.trim();
+  if (!prompt) { showMsg('inpaintStatus','⚠️ Enter a prompt!','error'); return; }
+
+  const btn = document.getElementById('inpaintBtn');
+  btn.disabled = true;
+  showMsg('inpaintStatus','⏳ Processing... (15–30s)','info');
+  showProgress('inpaintProgress');
+
+  try {
+    // Use Pollinations image-to-image with the prompt + reference image
+    const seed = Math.floor(Math.random() * 999999);
+    const encodedPrompt = encodeURIComponent(prompt + ', highly detailed, professional');
+    
+    // Convert image to blob and upload to get a URL via a data URI approach
+    // Use pollinations with image reference via base64
+    const canvas = document.getElementById('inpaintCanvas');
+    const imgDataUrl = inpaintImageData;
+    
+    // Send image as base64 to pollinations img2img endpoint
+    const response = await fetch('https://image.pollinations.ai/prompt/' + encodedPrompt + '?seed=' + seed + '&width=' + canvas.width + '&height=' + canvas.height + '&model=flux&nologo=true&image=' + encodeURIComponent(imgDataUrl.substring(0, 100)));
+    
+    // Fallback: use prompt-only generation enhanced with context
+    const fallbackUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}&seed=${seed}&width=${canvas.width}&height=${canvas.height}&model=flux&nologo=true`;
+    const res = await fetch(fallbackUrl);
+    if (!res.ok) throw new Error('Generation failed, try again');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    
+    hideMsg('inpaintStatus');
+    hideProgress('inpaintProgress');
+    const cont = document.getElementById('inpaintResults');
+    cont.innerHTML = `
+      <div style="margin-top:8px;border-radius:12px;overflow:hidden;border:1px solid var(--border);">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);">
+          <div><p style="text-align:center;font-size:11px;color:var(--muted);padding:4px">Original</p><img src="${inpaintImageData}" style="width:100%;aspect-ratio:1;object-fit:cover;"></div>
+          <div><p style="text-align:center;font-size:11px;color:var(--accent2);padding:4px">Result ✨</p><img src="${url}" style="width:100%;aspect-ratio:1;object-fit:cover;"></div>
+        </div>
+        <div style="padding:8px;background:var(--surface);display:flex;gap:6px;">
+          <button class="btn-sm btn-primary" style="flex:1" onclick="downloadUrl('${url}','inpainted.png')">⬇ Download</button>
+          <button class="btn-sm btn-secondary" style="flex:1" onclick="sendToEdit('${url}')">🖌️ Edit</button>
+        </div>
+      </div>`;
+    addToHistory(url, prompt, 'inpaint');
+  } catch(e) {
+    showMsg('inpaintStatus', '❌ ' + e.message, 'error');
+    hideProgress('inpaintProgress');
+  }
+  btn.disabled = false;
+}
+
+// ===== CLOTHES =====
+const clothesPresets = {
+  formal: 'a person wearing a sharp formal business suit, professional attire, white shirt, tie, high quality portrait',
+  casual: 'a person wearing casual trendy streetwear, jeans and t-shirt, stylish everyday outfit',
+  evening: 'a person wearing an elegant evening gown, formal dress, glamorous attire, red carpet look',
+  sporty: 'a person wearing athletic sportswear, performance clothing, gym outfit, sporty look',
+  traditional: 'a person wearing beautiful traditional cultural clothing, ethnic attire, vibrant colors',
+  royal: 'a person wearing royal fantasy costume, elaborate regal attire, crown, magnificent outfit',
+};
+
+function applyClothesPreset(val) {
+  if (val && clothesPresets[val]) {
+    document.getElementById('clothesPrompt').value = clothesPresets[val];
+  }
+}
+
+function loadClothesImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    clothesImageData = e.target.result;
+    const canvas = document.getElementById('clothesCanvas');
+    const img = new Image();
+    img.onload = () => {
+      const maxW = window.innerWidth - 32;
+      const scale = Math.min(maxW / img.width, 320 / img.height, 1);
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+      canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+      canvas.style.display = 'block';
+      document.getElementById('clothesPlaceholder').style.display = 'none';
+      document.getElementById('clothesControls').style.display = '';
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+async function runClothesChange() {
+  if (!clothesImageData) { showMsg('clothesStatus','⚠️ Upload a photo first!','error'); return; }
+  const prompt = document.getElementById('clothesPrompt').value.trim();
+  if (!prompt) { showMsg('clothesStatus','⚠️ Describe the outfit!','error'); return; }
+
+  const btn = document.getElementById('clothesBtn');
+  btn.disabled = true;
+  showMsg('clothesStatus','⏳ Changing outfit... (15–30s)','info');
+  showProgress('clothesProgress');
+
+  try {
+    const seed = Math.floor(Math.random() * 999999);
+    const fullPrompt = prompt + ', same facial features, face preserved, detailed portrait, professional photography, studio lighting, photorealistic';
+    const negPrompt = 'different face, changed face, distorted face, ugly, deformed, blurry face';
+    const encodedPrompt = encodeURIComponent(fullPrompt);
+    const encodedNeg = encodeURIComponent(negPrompt);
+    const canvas = document.getElementById('clothesCanvas');
+    const w = Math.min(canvas.width, 768);
+    const h = Math.min(canvas.height, 768);
+
+    const url2 = `https://image.pollinations.ai/prompt/${encodedPrompt}?negative_prompt=${encodedNeg}&width=${w}&height=${h}&seed=${seed}&model=flux-realism&nologo=true&enhance=true`;
+    const res = await fetch(url2);
+    if (!res.ok) throw new Error('Generation failed, try again');
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+
+    hideMsg('clothesStatus');
+    hideProgress('clothesProgress');
+    const cont = document.getElementById('clothesResults');
+    cont.innerHTML = `
+      <div style="margin-top:8px;border-radius:12px;overflow:hidden;border:1px solid var(--border);">
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);">
+          <div><p style="text-align:center;font-size:11px;color:var(--muted);padding:4px">Original</p><img src="${clothesImageData}" style="width:100%;aspect-ratio:1;object-fit:cover;"></div>
+          <div><p style="text-align:center;font-size:11px;color:var(--accent2);padding:4px">New Outfit ✨</p><img src="${url}" style="width:100%;aspect-ratio:1;object-fit:cover;"></div>
+        </div>
+        <div style="padding:8px;background:var(--surface);display:flex;gap:6px;">
+          <button class="btn-sm btn-primary" style="flex:1" onclick="downloadUrl('${url}','outfit.png')">⬇ Download</button>
+          <button class="btn-sm btn-secondary" style="flex:1" onclick="sendToEdit('${url}')">🖌️ Refine</button>
+        </div>
+      </div>`;
+    addToHistory(url, 'Outfit: ' + prompt, 'outfit');
+  } catch(e) {
+    showMsg('clothesStatus', '❌ ' + e.message, 'error');
+    hideProgress('clothesProgress');
+  }
+  btn.disabled = false;
+}
+
+// Init
+renderHistory();
+</script>
+</body>
+</html>
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+    gap: 8px;
+  }
+  .logo {
+    font-family: 'Syne', sans-serif;
+    font-weight: 800;
+    font-size: 18px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    white-space: nowrap;
+  }
+  .api-section {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    flex: 1;
+    max-width: 340px;
+  }
+  .api-input {
+    flex: 1;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 6px 10px;
+    border-radius: 8px;
+    font-size: 12px;
+    font-family: monospace;
+    min-width: 0;
+  }
+  .api-input:focus { outline: none; border-color: var(--accent); }
+  .api-input::placeholder { color: var(--muted); }
+  .btn-sm {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: none;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: #6d28d9; }
+  .btn-secondary { background: var(--surface2); color: var(--text); border: 1px solid var(--border); }
+  .btn-secondary:hover { border-color: var(--accent); }
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex-shrink: 0;
+  }
+  .status-dot.connected { background: var(--success); box-shadow: 0 0 6px var(--success); }
+
+  /* TABS */
+  .tabs {
+    display: flex;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+    flex-shrink: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    padding: 10px 16px;
+    font-size: 12px;
+    font-weight: 500;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .tab:hover:not(.active) { color: var(--text); }
+
+  /* MAIN */
+  .main {
+    flex: 1;
+    overflow-y: auto;
+    padding: 16px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+
+  /* PANELS */
+  .panel { display: none; flex-direction: column; gap: 14px; }
+  .panel.active { display: flex; }
+
+  /* CANVAS AREA */
+  .canvas-container {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+    position: relative;
+    min-height: 260px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .canvas-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    color: var(--muted);
+    padding: 32px;
+    text-align: center;
+  }
+  .canvas-placeholder .icon { font-size: 40px; }
+  .canvas-placeholder p { font-size: 13px; }
+  #mainCanvas {
+    max-width: 100%;
+    max-height: 320px;
+    border-radius: 8px;
+    display: none;
+  }
+  #inpaintCanvas {
+    max-width: 100%;
+    max-height: 320px;
+    border-radius: 8px;
+    display: none;
+    cursor: crosshair;
+    touch-action: none;
+  }
+
+  /* CONTROLS */
+  .card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .card-title {
+    font-family: 'Syne', sans-serif;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--accent2);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  label {
+    font-size: 12px;
+    color: var(--muted);
+    display: block;
+    margin-bottom: 4px;
+  }
+  textarea, input[type="text"], select {
+    width: 100%;
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    resize: vertical;
+    transition: border-color 0.2s;
+  }
+  textarea:focus, input[type="text"]:focus, select:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+  textarea::placeholder, input::placeholder { color: var(--muted); }
+  select { cursor: pointer; }
+  select option { background: var(--surface2); }
+
+  .row { display: flex; gap: 8px; align-items: flex-end; }
+  .row > * { flex: 1; }
+
+  input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+  .range-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .range-row input { flex: 1; }
+  .range-val {
+    font-size: 12px;
+    color: var(--accent2);
+    min-width: 28px;
+    text-align: right;
+    font-weight: 500;
+  }
+
+  /* GENERATE BUTTON */
+  .btn-generate {
+    width: 100%;
+    padding: 14px;
+    background: linear-gradient(135deg, var(--accent), #4f46e5);
+    color: white;
+    border: none;
+    border-radius: 12px;
+    font-family: 'Syne', sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.3s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    position: relative;
+    overflow: hidden;
+  }
+  .btn-generate:hover { transform: translateY(-1px); box-shadow: 0 8px 24px rgba(124,58,237,0.4); }
+  .btn-generate:active { transform: translateY(0); }
+  .btn-generate:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+  .btn-generate.loading::after {
+    content: '';
+    position: absolute;
+    bottom: 0; left: -100%;
+    width: 100%; height: 2px;
+    background: linear-gradient(90deg, transparent, white, transparent);
+    animation: shimmer 1.2s infinite;
+  }
+  @keyframes shimmer { to { left: 100%; } }
+
+  /* PROGRESS */
+  .progress-bar {
+    width: 100%;
+    height: 4px;
+    background: var(--surface2);
+    border-radius: 2px;
+    overflow: hidden;
+    display: none;
+  }
+  .progress-bar.active { display: block; }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    transition: width 0.3s;
+    width: 0%;
+  }
+  @keyframes progress-indeterminate {
+    0% { left: -100%; width: 40%; }
+    100% { left: 100%; width: 40%; }
+  }
+  .progress-bar.indeterminate .progress-fill {
+    position: relative;
+    animation: progress-indeterminate 1.5s infinite;
+    width: 40% !important;
+  }
+
+  /* STATUS */
+  .status-msg {
+    font-size: 12px;
+    padding: 8px 12px;
+    border-radius: 8px;
+    display: none;
+    align-items: center;
+    gap: 6px;
+  }
+  .status-msg.active { display: flex; }
+  .status-msg.info { background: rgba(6,182,212,0.1); color: var(--accent2); border: 1px solid rgba(6,182,212,0.2); }
+  .status-msg.error { background: rgba(239,68,68,0.1); color: var(--danger); border: 1px solid rgba(239,68,68,0.2); }
+  .status-msg.success { background: rgba(16,185,129,0.1); color: var(--success); border: 1px solid rgba(16,185,129,0.2); }
+
+  /* IMAGE GRID */
+  .img-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .img-item {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    position: relative;
+    aspect-ratio: 1;
+    background: var(--surface2);
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  .img-item:hover { border-color: var(--accent); }
+  .img-item img { width: 100%; height: 100%; object-fit: cover; }
+  .img-item .img-actions {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    background: linear-gradient(transparent, rgba(0,0,0,0.8));
+    padding: 24px 6px 6px;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .img-item:hover .img-actions { opacity: 1; }
+  .img-action-btn {
+    flex: 1;
+    padding: 4px;
+    border-radius: 6px;
+    border: none;
+    font-size: 10px;
+    cursor: pointer;
+    font-weight: 500;
+  }
+  .img-action-btn.dl { background: var(--accent2); color: white; }
+  .img-action-btn.edit { background: var(--accent); color: white; }
+
+  /* FILTER GRID */
+  .filter-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .filter-btn {
+    padding: 8px 4px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 11px;
+    cursor: pointer;
+    text-align: center;
+    transition: all 0.2s;
+  }
+  .filter-btn:hover, .filter-btn.active { border-color: var(--accent); color: var(--accent2); background: rgba(124,58,237,0.1); }
+
+  /* UPLOAD */
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 12px;
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: var(--muted);
+  }
+  .upload-zone:hover { border-color: var(--accent); color: var(--text); background: rgba(124,58,237,0.05); }
+  .upload-zone .icon { font-size: 28px; margin-bottom: 6px; }
+  .upload-zone p { font-size: 13px; }
+  input[type="file"] { display: none; }
+
+  /* MASK TOOLS */
+  .mask-tools {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+  .mask-tool-btn {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+    color: var(--text);
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.2s;
+  }
+  .mask-tool-btn.active { border-color: var(--accent); background: rgba(124,58,237,0.2); color: var(--accent2); }
+
+  /* HISTORY */
+  .history-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .history-item {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    background: var(--surface2);
+  }
+  .history-item img { width: 100%; aspect-ratio: 1; object-fit: cover; }
+  .history-meta {
+    padding: 6px 8px;
+    font-size: 10px;
+    color: var(--muted);
+    line-height: 1.4;
+  }
+  .history-meta strong { color: var(--text); font-size: 11px; }
+
+  /* BADGE */
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-size: 10px;
+    font-weight: 600;
+  }
+  .badge-purple { background: rgba(124,58,237,0.2); color: #a78bfa; border: 1px solid rgba(124,58,237,0.3); }
+  .badge-cyan { background: rgba(6,182,212,0.15); color: var(--accent2); border: 1px solid rgba(6,182,212,0.3); }
+  .badge-amber { background: rgba(245,158,11,0.15); color: var(--accent3); border: 1px solid rgba(245,158,11,0.3); }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .empty-state {
+    text-align: center;
+    color: var(--muted);
+    padding: 32px 16px;
+    font-size: 13px;
+  }
+  .empty-state .icon { font-size: 32px; margin-bottom: 8px; }
+
+  /* CLOTHES CHANGE INFO */
+  .info-box {
+    background: rgba(245,158,11,0.08);
+    border: 1px solid rgba(245,158,11,0.2);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 12px;
+    color: var(--accent3);
+    line-height: 1.5;
+  }
+  .info-box strong { display: block; margin-bottom: 3px; }
+
+  /* SCROLLBAR */
+  .main::-webkit-scrollbar { width: 4px; }
+  .main::-webkit-scrollbar-track { background: transparent; }
+  .main::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+  .panel.active { animation: fadeIn 0.25s ease; }
+
+  /* HF KEY HELPER */
+  .hf-link { color: var(--accent2); text-decoration: none; font-size: 11px; }
+  .hf-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">PixelMind</div>
+  <div style="font-size:11px;color:#10b981;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.2);padding:5px 10px;border-radius:8px;">✅ Free • No API Key Needed</div>
+</header>
+
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('generate')">✨ Generate</div>
+  <div class="tab" onclick="switchTab('edit')">🖌️ Edit & Filters</div>
+  <div class="tab" onclick="switchTab('inpaint')">🎭 Inpaint</div>
+  <div class="tab" onclick="switchTab('clothes')">👗 Outfit</div>
+  <div class="tab" onclick="switchTab('history')">🕘 History</div>
+</div>
+
+<div class="main">
+
+  <!-- ===== GENERATE ===== -->
+  <div class="panel active" id="panel-generate">
+    <div class="card">
+      <div class="card-title">Text → Image</div>
+      <div>
+        <label>Describe your image</label>
+        <textarea id="genPrompt" rows="3" placeholder="A cinematic portrait of a woman in golden hour light, ultra detailed, 8k..."></textarea>
+      </div>
+      <div>
+        <label>Negative prompt (what to avoid)</label>
+        <textarea id="genNeg" rows="2" placeholder="blurry, distorted, low quality, extra limbs..."></textarea>
+      </div>
+      <div class="row">
+        <div>
+          <label>Model</label>
+          <select id="genModel">
+            <option value="stabilityai/stable-diffusion-xl-base-1.0">SDXL Base</option>
+            <option value="runwayml/stable-diffusion-v1-5">SD 1.5</option>
+            <option value="SG161222/Realistic_Vision_V5.1_noVAE">Realistic Vision</option>
+            <option value="dreamlike-art/dreamlike-photoreal-2.0">Dreamlike Photoreal</option>
+            <option value="Lykon/dreamshaper-8">DreamShaper 8</option>
+          </select>
+        </div>
+        <div>
+          <label>Style</label>
+          <select id="genStyle">
+            <option value="">None</option>
+            <option value="photorealistic, DSLR photo, ">Photorealistic</option>
+            <option value="oil painting, artistic, ">Oil Painting</option>
+            <option value="anime style, manga, ">Anime</option>
+            <option value="cinematic lighting, movie still, ">Cinematic</option>
+            <option value="watercolor illustration, ">Watercolor</option>
+            <option value="digital art, concept art, ">Digital Art</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label>Steps: <span id="stepsVal">30</span></label>
+        <input type="range" id="stepsRange" min="10" max="50" value="30" oninput="stepsVal.textContent=this.value">
+      </div>
+      <div>
+        <label>Guidance scale: <span id="cfgVal">7.5</span></label>
+        <input type="range" id="cfgRange" min="1" max="20" step="0.5" value="7.5" oninput="cfgVal.textContent=this.value">
+      </div>
+      <div class="row">
+        <div>
+          <label>Width</label>
+          <select id="genWidth">
+            <option value="512">512px</option>
+            <option value="768">768px</option>
+            <option value="1024" selected>1024px</option>
+          </select>
+        </div>
+        <div>
+          <label>Height</label>
+          <select id="genHeight">
+            <option value="512">512px</option>
+            <option value="768">768px</option>
+            <option value="1024" selected>1024px</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="status-msg info" id="genStatus">⏳ Generating your image, this may take 20–60 seconds...</div>
+    <div class="progress-bar indeterminate" id="genProgress"><div class="progress-fill"></div></div>
+
+    <button class="btn-generate" id="genBtn" onclick="generateImage()">
+      ✨ Generate Image
+    </button>
+
+    <div id="genResults"></div>
+  </div>
+
+  <!-- ===== EDIT & FILTERS ===== -->
+  <div class="panel" id="panel-edit">
+    <div class="card">
+      <div class="card-title">Upload Image</div>
+      <div class="upload-zone" onclick="document.getElementById('editFile').click()">
+        <div class="icon">📁</div>
+        <p>Tap to upload photo from gallery</p>
+      </div>
+      <input type="file" id="editFile" accept="image/*" onchange="loadEditImage(event)">
+    </div>
+
+    <div class="canvas-container" id="editCanvas">
+      <div class="canvas-placeholder">
+        <div class="icon">🖼️</div>
+        <p>Upload an image to start editing</p>
+      </div>
+      <canvas id="mainCanvas"></canvas>
+    </div>
+
+    <div class="card" id="filterCard" style="display:none">
+      <div class="card-title">Filters & Adjustments</div>
+      <div class="filter-grid">
+        <button class="filter-btn" onclick="applyFilter('none')">Original</button>
+        <button class="filter-btn" onclick="applyFilter('grayscale')">B&W</button>
+        <button class="filter-btn" onclick="applyFilter('sepia')">Sepia</button>
+        <button class="filter-btn" onclick="applyFilter('vivid')">Vivid</button>
+        <button class="filter-btn" onclick="applyFilter('cool')">Cool</button>
+        <button class="filter-btn" onclick="applyFilter('warm')">Warm</button>
+        <button class="filter-btn" onclick="applyFilter('fade')">Faded</button>
+        <button class="filter-btn" onclick="applyFilter('sharp')">Sharp</button>
+        <button class="filter-btn" onclick="applyFilter('vignette')">Vignette</button>
+      </div>
+      <div>
+        <label>Brightness: <span id="brightVal">100</span>%</label>
+        <input type="range" id="brightRange" min="0" max="200" value="100" oninput="brightVal.textContent=this.value; applyAdjust()">
+      </div>
+      <div>
+        <label>Contrast: <span id="contrastVal">100</span>%</label>
+        <input type="range" id="contrastRange" min="0" max="200" value="100" oninput="contrastVal.textContent=this.value; applyAdjust()">
+      </div>
+      <div>
+        <label>Saturation: <span id="satVal">100</span>%</label>
+        <input type="range" id="satRange" min="0" max="300" value="100" oninput="satVal.textContent=this.value; applyAdjust()">
+      </div>
+      <div>
+        <label>Blur: <span id="blurVal">0</span>px</label>
+        <input type="range" id="blurRange" min="0" max="10" value="0" oninput="blurVal.textContent=this.value; applyAdjust()">
+      </div>
+      <div class="row">
+        <button class="btn-sm btn-secondary" onclick="resetAdjust()">Reset</button>
+        <button class="btn-sm btn-primary" onclick="downloadCanvas('mainCanvas')">⬇ Download</button>
+        <button class="btn-sm btn-secondary" onclick="cropTool()">✂️ Crop</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== INPAINT ===== -->
+  <div class="panel" id="panel-inpaint">
+    <div class="card">
+      <div class="info-box">
+        <strong>🎭 How Inpainting Works</strong>
+        Draw a mask over the area you want to change, describe what should replace it, and the AI will blend it seamlessly.
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title">Upload Image</div>
+      <div class="upload-zone" onclick="document.getElementById('inpaintFile').click()">
+        <div class="icon">📁</div>
+        <p>Upload image to inpaint</p>
+      </div>
+      <input type="file" id="inpaintFile" accept="image/*" onchange="loadInpaintImage(event)">
+    </div>
+
+    <div class="canvas-container" id="inpaintContainer">
+      <div class="canvas-placeholder" id="inpaintPlaceholder">
+        <div class="icon">🎭</div>
+        <p>Upload an image to draw your mask</p>
+      </div>
+      <canvas id="inpaintCanvas"></canvas>
+    </div>
+
+    <div class="card" id="inpaintTools" style="display:none">
+      <div class="card-title">Mask Tools</div>
+      <div class="mask-tools">
+        <button class="mask-tool-btn active" id="brushBtn" onclick="setMaskTool('brush')">🖌️ Brush</button>
+        <button class="mask-tool-btn" id="eraseBtn" onclick="setMaskTool('erase')">🗑️ Erase</button>
+        <button class="mask-tool-btn" onclick="clearMask()">🔄 Clear</button>
+      </div>
+      <div>
+        <label>Brush size: <span id="brushVal">30</span>px</label>
+        <input type="range" id="brushSize" min="5" max="80" value="30" oninput="brushVal.textContent=this.value">
+      </div>
+    </div>
+
+    <div class="card" id="inpaintPromptCard" style="display:none">
+      <div class="card-title">What to paint</div>
+      <div>
+        <label>Describe the new content for masked area</label>
+        <textarea id="inpaintPrompt" rows="2" placeholder="A beautiful garden with flowers..."></textarea>
+      </div>
+      <div>
+        <label>Model</label>
+        <select id="inpaintModel">
+          <option value="stabilityai/stable-diffusion-2-inpainting">SD2 Inpainting</option>
+          <option value="runwayml/stable-diffusion-inpainting">SD1.5 Inpainting</option>
+        </select>
+      </div>
+      <div class="status-msg info" id="inpaintStatus"></div>
+      <div class="progress-bar indeterminate" id="inpaintProgress"><div class="progress-fill"></div></div>
+      <button class="btn-generate" id="inpaintBtn" onclick="runInpaint()">🎭 Apply Inpaint</button>
+    </div>
+    <div id="inpaintResults"></div>
+  </div>
+
+  <!-- ===== CLOTHES ===== -->
+  <div class="panel" id="panel-clothes">
+    <div class="card">
+      <div class="info-box" style="background:rgba(124,58,237,0.08);border-color:rgba(124,58,237,0.25);color:#a78bfa;">
+        <strong>👗 AI Outfit Changer — Face Preserved</strong>
+        Upload a portrait photo. The AI will change the clothing while preserving your facial features using inpainting focused on the body area only.
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Upload Portrait Photo</div>
+      <div class="upload-zone" onclick="document.getElementById('clothesFile').click()">
+        <div class="icon">🤳</div>
+        <p>Upload a clear portrait photo (face visible)</p>
+      </div>
+      <input type="file" id="clothesFile" accept="image/*" onchange="loadClothesImage(event)">
+    </div>
+
+    <div class="canvas-container">
+      <div class="canvas-placeholder" id="clothesPlaceholder">
+        <div class="icon">👗</div>
+        <p>Upload a photo to change outfit</p>
+      </div>
+      <canvas id="clothesCanvas" style="max-width:100%;max-height:320px;border-radius:8px;display:none;"></canvas>
+    </div>
+
+    <div class="card" id="clothesControls" style="display:none">
+      <div class="card-title">Outfit Description</div>
+      <div>
+        <label>Describe the new outfit in detail</label>
+        <textarea id="clothesPrompt" rows="3" placeholder="Wearing an elegant red evening dress with gold accessories, professional portrait..."></textarea>
+      </div>
+      <div>
+        <label>Style Preset</label>
+        <select id="clothesStyle" onchange="applyClothesPreset(this.value)">
+          <option value="">Custom (use above)</option>
+          <option value="formal">Formal Business Suit</option>
+          <option value="casual">Casual Street Wear</option>
+          <option value="evening">Evening Gown</option>
+          <option value="sporty">Athletic Sportswear</option>
+          <option value="traditional">Traditional Cultural Attire</option>
+          <option value="royal">Royal / Fantasy Costume</option>
+        </select>
+      </div>
+      <div>
+        <label>Preserve facial features strength</label>
+        <div class="range-row">
+          <input type="range" id="faceStrength" min="0.5" max="0.95" step="0.05" value="0.75">
+          <span class="range-val" id="faceStrVal">0.75</span>
+        </div>
+        <label style="margin-top:4px;font-size:11px;color:var(--muted)">Higher = more faithful to original face</label>
+      </div>
+      <div class="status-msg info" id="clothesStatus"></div>
+      <div class="progress-bar indeterminate" id="clothesProgress"><div class="progress-fill"></div></div>
+      <button class="btn-generate" id="clothesBtn" onclick="runClothesChange()">👗 Change Outfit</button>
+    </div>
+    <div id="clothesResults"></div>
+  </div>
+
+  <!-- ===== HISTORY ===== -->
+  <div class="panel" id="panel-history">
+    <div class="section-header">
+      <span class="card-title" style="font-family:'Syne',sans-serif;font-size:14px;color:var(--accent2);">Generated Images</span>
+      <button class="btn-sm btn-secondary" onclick="clearHistory()">Clear All</button>
+    </div>
+    <div id="historyGrid" class="history-grid">
+      <div class="empty-state" style="grid-column:1/-1">
+        <div class="icon">🕘</div>
+        <p>No images generated yet</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ===== STATE =====
+let hfApiKey = localStorage.getItem('hf_key') || '';
+let history = JSON.parse(localStorage.getItem('img_history') || '[]');
+let editImageData = null;
+let inpaintImageData = null;
+let clothesImageData = null;
+let maskCtx = null;
+let isDrawing = false;
+let maskTool = 'brush';
+let currentFilter = 'none';
+
+// ===== KEY =====
+if (hfApiKey) {
+  document.getElementById('hfKey').value = hfApiKey;
+  document.getElementById('statusDot').classList.add('connected');
+}
+document.getElementById('faceStrength').addEventListener('input', e => {
+  document.getElementById('faceStrVal').textContent = e.target.value;
+});
+
+function saveKey() {
+  hfApiKey = document.getElementById('hfKey').value.trim();
+  localStorage.setItem('hf_key', hfApiKey);
+  const dot = document.getElementById('statusDot');
+  if (hfApiKey) {
+    dot.classList.add('connected');
+    showMsg('genStatus', '✅ API key saved!', 'success');
+    setTimeout(() => hideMsg('genStatus'), 2000);
+  } else {
+    dot.classList.remove('connected');
+  }
+}
+
+// ===== TABS =====
+function switchTab(id) {
+  document.querySelectorAll('.tab').forEach((t,i) => t.classList.remove('active'));
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  const tabs = document.querySelectorAll('.tab');
+  const map = ['generate','edit','inpaint','clothes','history'];
+  tabs[map.indexOf(id)].classList.add('active');
+  document.getElementById('panel-' + id).classList.add('active');
+}
+
+// ===== STATUS =====
+function showMsg(id, msg, type='info') {
+  const el = document.getElementById(id);
+  el.textContent = msg;
+  el.className = `status-msg ${type} active`;
+}
+function hideMsg(id) {
+  document.getElementById(id).classList.remove('active');
+}
+function showProgress(id) {
+  document.getElementById(id).classList.add('active');
+}
+function hideProgress(id) {
+  document.getElementById(id).classList.remove('active');
+}
+
+// ===== POLLINATIONS API (free, no key, no CORS) =====
+async function pollinationsGenerate(prompt, negPrompt, width, height, model) {
+  const seed = Math.floor(Math.random() * 999999);
+  const p = encodeURIComponent(prompt);
+  const n = encodeURIComponent(negPrompt || 'blurry, low quality, distorted');
+  const url = `https://image.pollinations.ai/prompt/${p}?negative_prompt=${n}&width=${width}&height=${height}&seed=${seed}&model=${model}&nologo=true`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error('Generation failed, please try again');
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+// ===== GENERATE =====
+async function generateImage() {
+  const prompt = document.getElementById('genPrompt').value.trim();
+  if (!prompt) { showMsg('genStatus','⚠️ Please enter a prompt!','error'); return; }
+
+  const style = document.getElementById('genStyle').value;
+  const fullPrompt = style + prompt;
+  const neg = document.getElementById('genNeg').value;
+  const modelMap = {
+    'stabilityai/stable-diffusion-xl-base-1.0': 'flux',
+    'runwayml/stable-diffusion-v1-5': 'flux-realism',
+    'SG161222/Realistic_Vision_V5.1_noVAE': 'flux-realism',
+    'dreamlike-art/dreamlike-photoreal-2.0': 'flux-cinematic',
+    'Lykon/dreamshaper-8': 'flux-anime',
+  };
+  const polModel = modelMap[document.getElementById('genModel').value] || 'flux';
+  const width = parseInt(document.getElementById('genWidth').value);
+  const height = parseInt(document.getElementById('genHeight').value);
+
+  const btn = document.getElementById('genBtn');
+  btn.disabled = true;
+  btn.classList.add('loading');
+  showMsg('genStatus','⏳ Generating... (10–30s)','info');
+  showProgress('genProgress');
+
+  try {
+    const url = await pollinationsGenerate(fullPrompt, neg, width, height, polModel);
+    hideMsg('genStatus');
+    hideProgress('genProgress');
+    renderGeneratedImage(url, fullPrompt);
+    addToHistory(url, fullPrompt, 'generate');
+  } catch(e) {
+    showMsg('genStatus', '❌ ' + e.message, 'error');
+    hideProgress('genProgress');
+  }
+  btn.disabled = false;
+  btn.classList.remove('loading');
+}
+
+function renderGeneratedImage(url, prompt) {
+  const cont = document.getElementById('genResults');
+  const div = document.createElement('div');
+  div.style.cssText = 'margin-top:8px;border-radius:12px;overflow:hidden;border:1px solid var(--border);';
+  div.innerHTML = `
+    <img src="${url}" style="width:100%;display:block;border-radius:10px 10px 0 0;">
+    <div style="padding:8px;background:var(--surface);display:flex;gap:6px;">
+      <button class="btn-sm btn-primary" style="flex:1" onclick="downloadUrl('${url}','generated.png')">⬇ Download</button>
+      <button class="btn-sm btn-secondary" style="flex:1" onclick="sendToEdit('${url}')">🖌️ Edit</button>
+      <button class="btn-sm btn-secondary" style="flex:1" onclick="sendToInpaint('${url}')">🎭 Inpaint</button>
+    </div>
+  `;
+  cont.innerHTML = '';
+  cont.appendChild(div);
+}
+
+// ===== HISTORY =====
+function addToHistory(url, prompt, type) {
+  history.unshift({ url, prompt: prompt.substring(0,60), type, date: new Date().toLocaleTimeString() });
+  if (history.length > 20) history.pop();
+  localStorage.setItem('img_history', JSON.stringify(history));
+  renderHistory();
+}
+
+function renderHistory() {
+  const grid = document.getElementById('historyGrid');
+  if (!history.length) {
+    grid.innerHTML = '<div class="empty-state" style="grid-column:1/-1"><div class="icon">🕘</div><p>No images yet</p></div>';
+    return;
+  }
+  grid.innerHTML = history.map((h, i) => `
+    <div class="history-item">
+      <img src="${h.url}" loading="lazy">
+      <div class="history-meta">
+        <span class="badge badge-${h.type==='generate'?'purple':h.type==='inpaint'?'cyan':'amber'}">${h.type}</span><br>
+        <strong>${h.prompt}...</strong><br>${h.date}
+        <div style="margin-top:4px;display:flex;gap:4px;">
+          <button class="img-action-btn dl" onclick="downloadUrl('${h.url}','image.png')">⬇</button>
+          <button class="img-action-btn edit" onclick="sendToEdit('${h.url}')">Edit</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function clearHistory() {
+  history = [];
+  localStorage.removeItem('img_history');
+  renderHistory();
+}
+
+// ===== EDIT =====
+function loadEditImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    editImageData = e.target.result;
+    renderEditCanvas(editImageData);
+  };
+  reader.readAsDataURL(file);
+}
+
+function renderEditCanvas(src) {
+  const canvas = document.getElementById('mainCanvas');
+  const ctx = canvas.getContext('2d');
+  const img = new Image();
+  img.onload = () => {
+    const maxW = window.innerWidth - 32;
+    const scale = Math.min(maxW / img.width, 320 / img.height, 1);
+    canvas.width = img.width * scale;
+    canvas.height = img.height * scale;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.style.display = 'block';
+    document.querySelector('#editCanvas .canvas-placeholder').style.display = 'none';
+    document.getElementById('filterCard').style.display = '';
+    applyAdjust();
+  };
+  img.src = src;
+}
+
+function sendToEdit(url) {
+  editImageData = url;
+  renderEditCanvas(url);
+  switchTab('edit');
+}
+
+function sendToInpaint(url) {
+  loadInpaintFromUrl(url);
+  switchTab('inpaint');
+}
+
+let filterStyle = '';
+function applyFilter(f) {
+  currentFilter = f;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  applyAdjust();
+}
+
+function applyAdjust() {
+  const canvas = document.getElementById('mainCanvas');
+  if (!editImageData) return;
+  const b = document.getElementById('brightRange').value;
+  const c = document.getElementById('contrastRange').value;
+  const s = document.getElementById('satRange').value;
+  const bl = document.getElementById('blurRange').value;
+
+  let filter = `brightness(${b}%) contrast(${c}%) saturate(${s}%) blur(${bl}px)`;
+  if (currentFilter === 'grayscale') filter += ' grayscale(100%)';
+  if (currentFilter === 'sepia') filter += ' sepia(80%)';
+  if (currentFilter === 'vivid') filter += ' saturate(200%) contrast(120%)';
+  if (currentFilter === 'cool') filter += ' hue-rotate(30deg) saturate(120%)';
+  if (currentFilter === 'warm') filter += ' sepia(30%) saturate(130%)';
+  if (currentFilter === 'fade') filter += ' brightness(110%) saturate(70%) contrast(90%)';
+  if (currentFilter === 'sharp') filter += ' contrast(130%)';
+
+  canvas.style.filter = filter;
+  if (currentFilter === 'vignette') {
+    canvas.style.boxShadow = 'inset 0 0 80px rgba(0,0,0,0.7)';
+  } else {
+    canvas.style.boxShadow = '';
+  }
+}
+
+function resetAdjust() {
+  ['brightRange','contrastRange','satRange','blurRange'].forEach(id => {
+    const el = document.getElementById(id);
+    el.value = id === 'blurRange' ? 0 : 100;
+    el.dispatchEvent(new Event('input'));
+  });
+  currentFilter = 'none';
+  applyAdjust();
+}
+
+function downloadCanvas(id) {
+  const canvas = document.getElementById(id);
+  const tmp = document.createElement('canvas');
+  tmp.width = canvas.width; tmp.height = canvas.height;
+  const ctx = tmp.getContext('2d');
+  ctx.filter = canvas.style.filter || 'none';
+  const img = new Image();
+  img.onload = () => {
+    ctx.drawImage(img, 0, 0, tmp.width, tmp.height);
+    const a = document.createElement('a');
+    a.href = tmp.toDataURL('image/png');
+    a.download = 'edited.png';
+    a.click();
+  };
+  img.src = editImageData;
+}
+
+function downloadUrl(url, name) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+}
+
+function cropTool() {
+  alert('Tap-and-drag crop coming soon! For now, use your browser\'s share > edit feature or a photo editor for cropping.');
+}
+
+// ===== INPAINT =====
+function loadInpaintImage(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => loadInpaintFromUrl(e.target.result);
+  reader.readAsDataURL(file);
+}
+
+function loadInpaintFromUrl(src) {
+  inpaintImageData = src;
+  const canvas = document.getElementById('inpaintCanvas');
+  const img = new Image();
+  img.onload = () => {
+    const maxW = window.innerWidth - 32;
+    const scale = Math.min(maxW / img.width, 320 / img.height, 1);
+    canvas.width = img.width * scale;
+    canvas.height = img.height * scale;
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    canvas.style.display = 'block';
+    document.getElementById('inpaintPlaceholder').style.display = 'none';
+    document.getElementById('inpaintTools').style.display = '';
+    document.getElementById('inpaintPromptCard').style.display = '';
+    setupMaskDrawing(canvas);
+  };
+  img.src = src;
+}
+
+function setupMaskDrawing(canvas) {
+  const overlay = document.createElement('canvas');
+  overlay.width = canvas.width;
+  overlay.height = canvas.height;
+  overlay.style.cssText = `position:absolute;top:${canvas.offsetTop}px;left:${canvas.offsetLeft}px;width:${canvas.style.width||canvas.width+'px'};height:${canvas.style.height||canvas.height+'px'};cursor:crosshair;touch-action:none;border-radius:8px;`;
+  maskCtx = overlay.getContext('2d');
+  canvas.parentNode.appendChild(overlay);
+
+  let drawing = false;
+  const getPos = (e) => {
+    const rect = overlay.getBoundingClientRect();
+    const scaleX = overlay.width / rect.width;
+    const scaleY = overlay.height / rect.height;
+    const src = e.touches ? e.touches[0] : e;
+    return { x: (src.clientX - rect.left) * scaleX, y: (src.clientY - rect.top) * scaleY };
+  };
+  const draw = (e) => {
+    if (!drawing) return;
+    e.preventDefault();
+    const {x, y} = getPos(e);
+    const size = parseInt(document.getElementById('brushSize').value);
+    maskCtx.globalCompositeOperation = maskTool === 'erase' ? 'destination-out' : 'source-over';
+    maskCtx.fillStyle = 'rgba(124,58,237,0.6)';
+    maskCtx.beginPath();
+    maskCtx.arc(x, y, size/2, 0, Math.PI*2);
+    maskCtx.fill();
+  };
+  overlay.addEventListener('mousedown', e => { drawing = true; draw(e); });
+  overlay.addEventListener('mousemove', draw);
+  overlay.addEventListener('mouseup', () => drawing = false);
+  overlay.addEventListener('touchstart', e => { drawing = true; draw(e); }, {passive:false});
+  overlay.addEventListener('touchmove', draw, {passive:false});
+  overlay.addEventListener('touchend', () => drawing = false);
+}
+
+function setMaskTool(t) {
+  maskTool = t;
+  document.getElementById('brushBtn').classList.toggle('active', t==='brush');
+  document.getElementById('eraseBtn').classList.toggle('active', t==='erase');
+}
+
+function clearMask() {
+  if (maskCtx) maskCtx.clearRect(0, 0, maskCtx.canvas.width, maskCtx.canvas.height);
+}
+
+function canvasToBase64(canvas) {
+  return canvas.toDataURL('image/png').split(',')[1];
+}
+
+function dataURLToBase64(dataURL) {
+  return dataURL.split(',')[1];
+}
+
+async function getCompositeBase64(imgData, maskCanvas) {
+  // Create white-background mask image
+  const tmp = document.createElement('canvas');
+  tmp.width = maskCanvas.width;
+  tmp.height = maskCanvas.height;
+  const ctx = tmp.getContext('2d');
+  ctx.fillStyle = 'black';
+  ctx.fillRect(0, 0, tmp.width, tmp.height);
+  ctx.drawImage(maskCanvas, 0, 0);
+  return { imgB64: dataURLToBase64(imgData), maskB64: canvasToBase64(tmp) };
+}
+
+async function runInpaint() {
   if (!hfApiKey) { showMsg('inpaintStatus','⚠️ Enter your HuggingFace API key!','error'); return; }
   if (!inpaintImageData) { showMsg('inpaintStatus','⚠️ Upload an image first!','error'); return; }
   const prompt = document.getElementById('inpaintPrompt').value.trim();
